@@ -264,6 +264,8 @@ function getHtml() {
     .track-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px; }
     .track-tags { display: flex; flex-wrap: wrap; gap: 8px; }
     .tag { background: #333; padding: 4px 10px; border-radius: 12px; font-size: 0.85em; color: #bb86fc; }
+    .track-id a { color: #03dac6; text-decoration: none; font-size: 0.9em; transition: all 0.2s; }
+    .track-id a:hover { text-decoration: underline; color: #bb86fc; }
     .links a { display: block; color: #03dac6; text-decoration: none; margin-bottom: 8px; word-break: break-all; font-size: 1.1em; }
     .links a:hover { text-decoration: underline; }
     .loader { text-align: center; padding: 40px; color: #888; }
@@ -367,7 +369,9 @@ function getHtml() {
         div.innerHTML = \`
           <div class="track-header">
             <div class="track-tags">\${tagsHtml}</div>
-            <div class="track-id">Post #\${t.postId}</div>
+            <div class="track-id">
+              <a href="https://t.me/TribalAmbient/\${t.postId}" target="_blank" rel="noopener">Post #\${t.postId} ↗</a>
+            </div>
           </div>
           <div class="links">\${linksHtml}</div>
         \`;
