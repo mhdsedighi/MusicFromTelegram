@@ -21,6 +21,8 @@ essay
 thoughts
 lyrics
 quote
+clip
+soundcloud
 _art
 `;
 
@@ -185,7 +187,6 @@ async function handleScrape(env) {
         for (const substr of EXCLUDED_SUBSTR) {
           if (tag.includes(substr)) return false;
         }
-        
         return true;
       });
 
@@ -341,12 +342,17 @@ function getHtml() {
       container.className = '';
       
       let filtered = allTracks;
+      
       if (!activeTags.has('ALL')) {
-        filtered = allTracks.filter(t => t.hashtags.some(tag => activeTags.has(tag)));
+        const selectedTagsArray = Array.from(activeTags);
+        // 🎯 AND LOGIC: The track must contain EVERY selected tag simultaneously
+        filtered = allTracks.filter(t => 
+          selectedTagsArray.every(selectedTag => t.hashtags.includes(selectedTag))
+        );
       }
       
       if (filtered.length === 0) {
-        container.innerHTML = '<div class="loader">No tracks found for selected tags.</div>';
+        container.innerHTML = '<div class="loader">No tracks found matching ALL selected tags.</div>';
         return;
       }
       
