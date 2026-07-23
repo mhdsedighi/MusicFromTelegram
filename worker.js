@@ -104,12 +104,6 @@ async function handleScrape(env) {
   
   let currentUrl = baseUrl;
   let stopReason = 'Finished normally';
-  
-  // 🛡️ FIX: Moved OUTSIDE the while loop to persist across all iterations.
-  // This prevents a ReferenceError when updating state at the end of the function.
-  let batchMinId = Infinity;
-  let batchMaxId = -1;
-  let hitKnownPost = false;
 
   while (iterations < MAX_ITERATIONS) {
     if (Date.now() - startTime > TIME_LIMIT_MS) {
@@ -137,6 +131,10 @@ async function handleScrape(env) {
       break;
     }
 
+    let batchMinId = Infinity;
+    let batchMaxId = -1;
+    let hitKnownPost = false;
+
     for (let i = 0; i < postStarts.length; i++) {
       const postId = parseInt(postStarts[i][1], 10);
       
@@ -158,9 +156,7 @@ async function handleScrape(env) {
 
       // 🎵 Extract SoundCloud links from this post's HTML
       const scRegex = /https?:\/\/(?:www\.)?soundcloud\.com\/[^\s<"']+/gi;
-      const rawScLinks = postHtml.match(scRegex) || [];
-      // 🛡️ FIX: Clean trailing punctuation (like periods or parentheses) from URLs to prevent broken links
-      const scLinks = [...new Set(rawScLinks.map(link => link.replace(/[.,;:)]+$/, '')))];
+      const scLinks = [...new Set(postHtml.match(scRegex) || [])];
 
       // 🧹 Extract text (if it exists)
       let plainText = "";
