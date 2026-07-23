@@ -104,6 +104,12 @@ async function handleScrape(env) {
   
   let currentUrl = baseUrl;
   let stopReason = 'Finished normally';
+  
+  // 🛡️ FIX: Moved OUTSIDE the while loop to persist across all iterations.
+  // This prevents a ReferenceError when updating state at the end of the function.
+  let batchMinId = Infinity;
+  let batchMaxId = -1;
+  let hitKnownPost = false;
 
   while (iterations < MAX_ITERATIONS) {
     if (Date.now() - startTime > TIME_LIMIT_MS) {
@@ -131,10 +137,6 @@ async function handleScrape(env) {
       break;
     }
 
-    let batchMinId = Infinity;
-    let batchMaxId = -1;
-    let hitKnownPost = false;
-
     for (let i = 0; i < postStarts.length; i++) {
       const postId = parseInt(postStarts[i][1], 10);
       
@@ -156,37 +158,21 @@ async function handleScrape(env) {
 
       // 🎵 Extract SoundCloud links from this post's HTML
       const scRegex = /https?:\/\/(?:www\.)?soundcloud\.com\/[^\s<"']+/gi;
-      const scLinks = [...new Set(postHtml.match(scRegex) || [])];
+      const rawScLinks = postHtml.match(scRegex) || [];
+      // 🛡️ FIX: Clean trailing punctuation (like periods or parentheses) from URLs to prevent broken links
+      const scLinks = [...new Set(rawScLinks.map(link => link.replace(/[.,;:)]+$/, '')))];
 
       // 🧹 Extract text (if it exists)
       let plainText = "";
-      
-      // FIX 1: Robust DOM block extraction to handle nested <div> elements inside message text.
-      // Instead of relying on non-greedy </div>, we locate the message start tag and slice until
-      // the next major Telegram post element boundary.
-      const textClassMatch = postHtml.match(/<div[^>]*class="[^"]*tgme_widget_message_text[^"]*"[^>]*>/);
-      if (textClassMatch) {
-        const textStartIndex = textClassMatch.index + textClassMatch[0].length;
-        const restOfHtml = postHtml.substring(textStartIndex);
-        
-        // Telegram post sections end before footers, media wrappers, or next message blocks
-        const nextBlockMatch = restOfHtml.match(/<div[^>]*class="[^"]*(?:tgme_widget_message_footer|tgme_widget_message_user|tgme_widget_message_photo_wrap|tgme_widget_message_video_player)[^"]*"/);
-        const textContentHtml = nextBlockMatch ? restOfHtml.substring(0, nextBlockMatch.index) : restOfHtml;
-
-        plainText = textContentHtml
+      const textMatch = postHtml.match(/<div[^>]*class="[^"]*tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/);
+      if (textMatch) {
+        plainText = textMatch[1]
           .replace(/<br\s*\/?>/gi, '\n')
           .replace(/<[^>]+>/g, ' ')
-          // FIX 2: Comprehensive HTML entity decoding (numeric, hex, and standard named entities)
-          .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
-          .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
           .replace(/&nbsp;/g, ' ')
           .replace(/&amp;/g, '&')
           .replace(/&lt;/g, '<')
           .replace(/&gt;/g, '>')
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'")
-          .replace(/&mdash;/g, '—')
-          .replace(/&ndash;/g, '–')
           .replace(/\s+/g, ' ')
           .trim();
       }
@@ -223,12 +209,6 @@ async function handleScrape(env) {
     }
 
     if (hitKnownPost) break;
-
-    // FIX 3: Check if a valid min post ID was found to prevent "?before=Infinity" invalid requests
-    if (batchMinId === Infinity) {
-      stopReason = 'Failed to resolve valid post IDs on page.';
-      break;
-    }
 
     // 📉 Paginate to the next older batch using the oldest post ID we just successfully processed
     currentUrl = `${baseUrl}?before=${batchMinId}`;
