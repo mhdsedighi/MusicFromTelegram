@@ -173,7 +173,7 @@ async function handleScrape(env) {
           .trim();
       }
 
-      // 🏷️ Dynamically extract ALL hashtags from plain text
+      // 🏷️ Dynamically extract ALL hashtags from plain text (used for standard posts or the main mix entry)
       const hashRegex = /(?:^|\s)#([a-zA-Z0-9_]+)/g;
       const rawTags = new Set();
       let hashMatch;
@@ -194,13 +194,70 @@ async function handleScrape(env) {
         newPostsText.push(`--- Post #${postId} ---\n${plainText}`);
       }
 
-      // 💾 If it has SoundCloud links, save to tracks array WITH filtered tags
+      // 💾 If it has SoundCloud links, process tracks
       if (scLinks.length > 0) {
-        newTracks.push({
-          postId: postId,
-          hashtags: validTags,
-          links: scLinks
-        });
+        
+        // 🕒 NEW LOGIC: Check for Tracklist format (Timestamps followed by hashtags)
+        // Matches formats like "19:00" or "1:23:45" followed by hashtags.
+        const tracklistRegex = /(\d{1,2}:\d{2}(?::\d{2})?)\s*((?:#[a-zA-Z0-9_]+\s*)+)/g;
+        let trackMatch;
+        const tracklistEntries = [];
+        
+        while ((trackMatch = tracklistRegex.exec(plainText)) !== null) {
+          const timeStr = trackMatch[1];
+          const tagSection = trackMatch[2];
+          
+          // Extract tags specifically for this timestamp
+          const entryTags = new Set();
+          let entryTagMatch;
+          const entryTagRegex = /#([a-zA-Z0-9_]+)/g;
+          while ((entryTagMatch = entryTagRegex.exec(tagSection)) !== null) {
+            const tag = entryTagMatch[1].toLowerCase();
+            // Apply the same exclusion rules
+            if (!EXCLUDED_EXACT.has(tag) && !EXCLUDED_SUBSTR.some(substr => tag.includes(substr))) {
+              entryTags.add(tag);
+            }
+          }
+          
+          tracklistEntries.push({
+            time: timeStr,
+            tags: [...entryTags]
+          });
+        }
+
+        if (tracklistEntries.length > 0) {
+          // 🎯 CASE 1: Post contains a tracklist with timestamps
+          
+          // 1a. Create a separate track entry for each timestamp
+          // We assume the timestamps apply to the FIRST (or primary) SoundCloud link in the post
+          const baseScLink = scLinks[0];
+          tracklistEntries.forEach(entry => {
+            // Append the timestamp to the URL using SoundCloud's #t= format
+            const timestampedLink = `${baseScLink}#t=${entry.time}`;
+            newTracks.push({
+              postId: postId,
+              hashtags: entry.tags,
+              links: [timestampedLink]
+            });
+          });
+          
+          // 1b. Add the original SoundCloud link as a separate "mix" entry
+          // As requested, the main link is added with a "mix" hashtag
+          newTracks.push({
+            postId: postId,
+            hashtags: ['mix'],
+            links: scLinks
+          });
+          
+        } else {
+          // 🎯 CASE 2: Standard post (No tracklist timestamps found)
+          // Assign all valid tags from the post to the SoundCloud links
+          newTracks.push({
+            postId: postId,
+            hashtags: validTags,
+            links: scLinks
+          });
+        }
       }
     }
 
@@ -225,7 +282,15 @@ async function handleScrape(env) {
     existingTracks.forEach(t => trackMap.set(t.postId, t));
     newTracks.forEach(t => trackMap.set(t.postId, t));
     
-    const mergedTracks = Array.from(trackMap.values());
+    // 🧹 FIX for new tracklist logic: 
+    // Because we now generate multiple tracks with the SAME postId (timestamps + mix), 
+    // using postId as the Map key will overwrite previous ones. 
+    // We change the key to a composite of postId + first link to ensure uniqueness.
+    const uniqueTrackMap = new Map();
+    existingTracks.forEach(t => uniqueTrackMap.set(`${t.postId}_${t.links[0]}`, t));
+    newTracks.forEach(t => uniqueTrackMap.set(`${t.postId}_${t.links[0]}`, t));
+
+    const mergedTracks = Array.from(uniqueTrackMap.values());
     mergedTracks.sort((a, b) => b.postId - a.postId); // Newest first for UI
     
     await env.TELEGRAM_KV.put('tribal_ambient_tracks', JSON.stringify(mergedTracks));
