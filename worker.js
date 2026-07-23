@@ -338,7 +338,7 @@ function getHtml() {
   </style>
 </head>
 <body>
-  <h1>🎧 Tribal Ambient Archive</h1>
+  <h1>🎧 آرشیو موسیقی کانال یک جرعه معنویت</h1>
   <div class="controls" id="controls">
     <button id="btn-all" class="active">All Hashtags</button>
   </div>
