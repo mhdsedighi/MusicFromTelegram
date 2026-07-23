@@ -260,6 +260,7 @@ function getHtml() {
     button { padding: 8px 16px; border: 1px solid #444; background: #2a2a2a; color: #e0e0e0; cursor: pointer; border-radius: 20px; font-size: 14px; transition: all 0.2s; }
     button:hover { background: #3a3a3a; border-color: #bb86fc; }
     button.active { background: #bb86fc; color: #121212; border-color: #bb86fc; font-weight: bold; }
+    button.disabled { opacity: 0.3; cursor: not-allowed; pointer-events: none; }
     .track { margin-bottom: 25px; padding: 20px; border: 1px solid #333; border-radius: 12px; background: #1e1e1e; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
     .track-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-wrap: wrap; gap: 10px; }
     .track-tags { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -296,6 +297,7 @@ function getHtml() {
     function renderControls() {
       const controls = document.getElementById('controls');
       const allBtn = document.getElementById('btn-all');
+      allBtn.dataset.tag = 'ALL'; // Ensure dataset.tag is set for the ALL button
       
       const allTags = new Set();
       allTracks.forEach(t => t.hashtags.forEach(tag => allTags.add(tag)));
@@ -318,21 +320,15 @@ function getHtml() {
       if (tag === 'ALL') {
         activeTags.clear();
         activeTags.add('ALL');
-        document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
       } else {
         activeTags.delete('ALL');
-        document.getElementById('btn-all').classList.remove('active');
         if (activeTags.has(tag)) {
           activeTags.delete(tag);
-          btn.classList.remove('active');
         } else {
           activeTags.add(tag);
-          btn.classList.add('active');
         }
         if (activeTags.size === 0) {
           activeTags.add('ALL');
-          document.getElementById('btn-all').classList.add('active');
         }
       }
       renderTracks();
@@ -353,6 +349,42 @@ function getHtml() {
         );
       }
       
+      // 🧠 FACETED SEARCH LOGIC: Determine which tags are still valid to click
+      // based on the currently filtered tracks.
+      const availableTags = new Set();
+      filtered.forEach(t => t.hashtags.forEach(tag => availableTags.add(tag)));
+      
+      // Update button states based on available tags
+      const buttons = document.querySelectorAll('.controls button');
+      buttons.forEach(btn => {
+        const tag = btn.dataset.tag;
+        if (tag === 'ALL') {
+          if (activeTags.has('ALL')) {
+            btn.classList.add('active');
+          } else {
+            btn.classList.remove('active');
+          }
+          btn.disabled = false; // "All" is always available to reset
+          btn.classList.remove('disabled');
+        } else {
+          if (activeTags.has(tag)) {
+            btn.classList.add('active');
+            btn.disabled = false; // Can always click to deselect
+            btn.classList.remove('disabled');
+          } else {
+            btn.classList.remove('active');
+            if (availableTags.has(tag)) {
+              btn.disabled = false;
+              btn.classList.remove('disabled');
+            } else {
+              // Deactivate: clicking this would result in a null/empty list
+              btn.disabled = true;
+              btn.classList.add('disabled');
+            }
+          }
+        }
+      });
+
       if (filtered.length === 0) {
         container.innerHTML = '<div class="loader">No tracks found matching ALL selected tags.</div>';
         return;
