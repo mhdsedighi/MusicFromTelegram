@@ -13,20 +13,34 @@
  */
 
 // 🚫 HASHTAGS TO OMIT (One per line, NO commas, NO quotes)
-// Add any generic, spam, or non-music tags you want to hide from the UI here.
+// RULES:
+// - Exact match: 'telegram' (omits only #telegram)
+// - Contains match: '_art' (omits #retro_art, #test_art, #art, etc.)
 const EXCLUDED_HASHTAGS = `
 essay
 thoughts
 lyrics
 quote
+_art
 `;
 
-// Convert the exclusion list into a fast-lookup Set (lowercase, trimmed)
-const EXCLUDED_SET = new Set(
-  EXCLUDED_HASHTAGS.split('\n')
-    .map(tag => tag.trim().toLowerCase())
-    .filter(tag => tag.length > 0)
-);
+// Process the exclusion list into Exact Matches and Substring Matches
+const EXCLUDED_EXACT = new Set();
+const EXCLUDED_SUBSTR = [];
+
+EXCLUDED_HASHTAGS.split('\n')
+  .map(tag => tag.trim().toLowerCase())
+  .filter(tag => tag.length > 0)
+  .forEach(tag => {
+    if (tag.includes('_')) {
+      // If it has an underscore, treat it as a "contains" rule
+      // Remove underscores to get the core word (e.g., '_art' -> 'art')
+      EXCLUDED_SUBSTR.push(tag.replace(/_/g, ''));
+    } else {
+      // Otherwise, it's an exact match rule
+      EXCLUDED_EXACT.add(tag);
+    }
+  });
 
 export default {
   async fetch(request, env, ctx) {
@@ -165,8 +179,15 @@ async function handleScrape(env) {
         rawTags.add(hashMatch[1].toLowerCase());
       }
 
-      // 🚫 FILTER: Keep only tags that are NOT in the exclusion list
-      const validTags = [...rawTags].filter(tag => !EXCLUDED_SET.has(tag));
+      // 🚫 FILTER: Keep only tags that pass the exclusion rules
+      const validTags = [...rawTags].filter(tag => {
+        if (EXCLUDED_EXACT.has(tag)) return false;
+        for (const substr of EXCLUDED_SUBSTR) {
+          if (tag.includes(substr)) return false;
+        }
+        
+        return true;
+      });
 
       if (plainText.length > 0) {
         newPostsText.push(`--- Post #${postId} ---\n${plainText}`);
@@ -223,7 +244,7 @@ async function handleScrape(env) {
   );
 }
 
-// 🎨 HTML UI GENERATOR (Unchanged, dynamically reads filtered tags)
+// 🎨 HTML UI GENERATOR
 function getHtml() {
   return `<!DOCTYPE html>
 <html lang="en">
