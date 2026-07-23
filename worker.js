@@ -367,7 +367,18 @@ function getHtml() {
       const allTags = new Set();
       allTracks.forEach(t => t.hashtags.forEach(tag => allTags.add(tag)));
       
-      const sortedTags = Array.from(allTags).sort();
+      let sortedTags = Array.from(allTags).sort();
+      
+      // 🎯 PLACEMENT LOGIC: Ensure the "mix" button appears immediately after "All Hashtags"
+      if (sortedTags.includes('mix')) {
+        sortedTags = sortedTags.filter(tag => tag !== 'mix');
+        const mixBtn = document.createElement('button');
+        mixBtn.innerText = '#mix';
+        mixBtn.dataset.tag = 'mix';
+        if (activeTags.has('mix')) mixBtn.classList.add('active');
+        mixBtn.onclick = () => toggleTag('mix', mixBtn);
+        controls.appendChild(mixBtn);
+      }
       
       sortedTags.forEach(tag => {
         const btn = document.createElement('button');
