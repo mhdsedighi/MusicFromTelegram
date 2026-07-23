@@ -160,15 +160,33 @@ async function handleScrape(env) {
 
       // 🧹 Extract text (if it exists)
       let plainText = "";
-      const textMatch = postHtml.match(/<div[^>]*class="[^"]*tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/);
-      if (textMatch) {
-        plainText = textMatch[1]
+      
+      // FIX 1: Robust DOM block extraction to handle nested <div> elements inside message text.
+      // Instead of relying on non-greedy </div>, we locate the message start tag and slice until
+      // the next major Telegram post element boundary.
+      const textClassMatch = postHtml.match(/<div[^>]*class="[^"]*tgme_widget_message_text[^"]*"[^>]*>/);
+      if (textClassMatch) {
+        const textStartIndex = textClassMatch.index + textClassMatch[0].length;
+        const restOfHtml = postHtml.substring(textStartIndex);
+        
+        // Telegram post sections end before footers, media wrappers, or next message blocks
+        const nextBlockMatch = restOfHtml.match(/<div[^>]*class="[^"]*(?:tgme_widget_message_footer|tgme_widget_message_user|tgme_widget_message_photo_wrap|tgme_widget_message_video_player)[^"]*"/);
+        const textContentHtml = nextBlockMatch ? restOfHtml.substring(0, nextBlockMatch.index) : restOfHtml;
+
+        plainText = textContentHtml
           .replace(/<br\s*\/?>/gi, '\n')
           .replace(/<[^>]+>/g, ' ')
+          // FIX 2: Comprehensive HTML entity decoding (numeric, hex, and standard named entities)
+          .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
+          .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
           .replace(/&nbsp;/g, ' ')
           .replace(/&amp;/g, '&')
           .replace(/&lt;/g, '<')
           .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/&mdash;/g, '—')
+          .replace(/&ndash;/g, '–')
           .replace(/\s+/g, ' ')
           .trim();
       }
@@ -205,6 +223,12 @@ async function handleScrape(env) {
     }
 
     if (hitKnownPost) break;
+
+    // FIX 3: Check if a valid min post ID was found to prevent "?before=Infinity" invalid requests
+    if (batchMinId === Infinity) {
+      stopReason = 'Failed to resolve valid post IDs on page.';
+      break;
+    }
 
     // 📉 Paginate to the next older batch using the oldest post ID we just successfully processed
     currentUrl = `${baseUrl}?before=${batchMinId}`;
