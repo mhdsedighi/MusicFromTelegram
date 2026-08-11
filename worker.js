@@ -16,301 +16,228 @@
 // RULES:
 // - Exact match: 'telegram' (omits only #telegram)
 // - Contains match: '_art' (omits #retro_art, #test_art, #art, etc.)
-const EXCLUDED_HASHTAGS = `
+
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+
+// worker.js
+var EXCLUDED_HASHTAGS = `
 essay
 thoughts
 lyrics
 quote
 clip
 soundcloud
+art
 _art
 `;
-
-// Process the exclusion list into Exact Matches and Substring Matches
-const EXCLUDED_EXACT = new Set();
-const EXCLUDED_SUBSTR = [];
-
-EXCLUDED_HASHTAGS.split('\n')
-  .map(tag => tag.trim().toLowerCase())
-  .filter(tag => tag.length > 0)
-  .forEach(tag => {
-    if (tag.includes('_')) {
-      // If it has an underscore, treat it as a "contains" rule
-      // Remove underscores to get the core word (e.g., '_art' -> 'art')
-      EXCLUDED_SUBSTR.push(tag.replace(/_/g, ''));
-    } else {
-      // Otherwise, it's an exact match rule
-      EXCLUDED_EXACT.add(tag);
-    }
-  });
-
-export default {
+var EXCLUDED_EXACT = /* @__PURE__ */ new Set();
+var EXCLUDED_SUBSTR = [];
+EXCLUDED_HASHTAGS.split("\n").map((tag) => tag.trim().toLowerCase()).filter((tag) => tag.length > 0).forEach((tag) => {
+  if (tag.includes("_")) {
+    // Fixed: Keep the underscore to avoid unintended substring matches like "art" in "smart"
+    EXCLUDED_SUBSTR.push(tag);
+  } else {
+    EXCLUDED_EXACT.add(tag);
+  }
+});
+var worker_default = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-
-    if (url.pathname === '/') {
-      return new Response(getHtml(), { headers: { 'content-type': 'text/html; charset=utf-8' } });
+    if (url.pathname === "/") {
+      return new Response(getHtml(), { headers: { "content-type": "text/html; charset=utf-8" } });
     }
-
-    if (url.pathname === '/api/tracks') {
-      const tracks = await env.TELEGRAM_KV.get('tribal_ambient_tracks', 'json') || [];
-      return new Response(JSON.stringify(tracks), { headers: { 'content-type': 'application/json' } });
+    if (url.pathname === "/api/tracks") {
+      const tracks = await env.TELEGRAM_KV.get("tribal_ambient_tracks", "json") || [];
+      return new Response(JSON.stringify(tracks), { headers: { "content-type": "application/json" } });
     }
-
-    if (url.pathname === '/scrape') {
+    if (url.pathname === "/scrape") {
       return await handleScrape(env);
     }
-
-    if (url.pathname === '/get') {
-      const storedText = await env.TELEGRAM_KV.get('tribal_ambient_posts', 'text');
-      return new Response(storedText || 'No data found. Run /scrape first.', {
-        headers: { 'content-type': 'text/plain; charset=utf-8' },
+    if (url.pathname === "/get") {
+      const storedText = await env.TELEGRAM_KV.get("tribal_ambient_posts", "text");
+      return new Response(storedText || "No data found. Run /scrape first.", {
+        headers: { "content-type": "text/plain; charset=utf-8" }
       });
     }
-
-    if (url.pathname === '/reset') {
-      await env.TELEGRAM_KV.delete('tribal_ambient_state');
-      await env.TELEGRAM_KV.delete('tribal_ambient_posts');
-      await env.TELEGRAM_KV.delete('tribal_ambient_tracks');
-      return new Response('All data reset.', { headers: { 'content-type': 'text/plain' } });
+    if (url.pathname === "/reset") {
+      await env.TELEGRAM_KV.delete("tribal_ambient_state");
+      await env.TELEGRAM_KV.delete("tribal_ambient_posts");
+      await env.TELEGRAM_KV.delete("tribal_ambient_tracks");
+      return new Response("All data reset.", { headers: { "content-type": "text/plain" } });
     }
-
-    return new Response('Endpoints: / (UI), /scrape, /get, /api/tracks, /reset', { headers: { 'content-type': 'text/plain' } });
+    return new Response("Endpoints: / (UI), /scrape, /get, /api/tracks, /reset", { headers: { "content-type": "text/plain" } });
   },
-
   async scheduled(event, env, ctx) {
     ctx.waitUntil(handleScrape(env));
   }
 };
-
 async function handleScrape(env) {
-  const channelName = 'TribalAmbient';
+  const channelName = "TribalAmbient";
   const baseUrl = `https://t.me/s/${channelName}`;
-  
-  const lastState = await env.TELEGRAM_KV.get('tribal_ambient_state', 'json') || {};
-  let minPostId = lastState.minPostId || 0; 
-  let maxPostId = lastState.maxPostId || 0; 
-  
-  const existingTracksRaw = await env.TELEGRAM_KV.get('tribal_ambient_tracks', 'json');
+  const lastState = await env.TELEGRAM_KV.get("tribal_ambient_state", "json") || {};
+  let minPostId = lastState.minPostId || 0;
+  let maxPostId = lastState.maxPostId || 0;
+  const existingTracksRaw = await env.TELEGRAM_KV.get("tribal_ambient_tracks", "json");
   let existingTracks = Array.isArray(existingTracksRaw) ? existingTracksRaw : [];
-  
   let newPostsText = [];
   let newTracks = [];
   let iterations = 0;
-  
-  const MAX_ITERATIONS = 100; 
-  const TIME_LIMIT_MS = 25000; 
+  const MAX_ITERATIONS = 100;
+  const TIME_LIMIT_MS = 25e3;
   const startTime = Date.now();
-  
   let currentUrl = baseUrl;
-  let stopReason = 'Finished normally';
+  let stopReason = "Finished normally";
+  
+  // Fixed: Added runMinId and runMaxId to track global min/max across all iterations
+  let runMinId = Infinity;
+  let runMaxId = -1;
 
   while (iterations < MAX_ITERATIONS) {
     if (Date.now() - startTime > TIME_LIMIT_MS) {
       stopReason = `Time limit reached (${TIME_LIMIT_MS}ms).`;
       break;
     }
-
     const response = await fetch(currentUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
     });
-
     if (!response.ok) {
-      stopReason = 'Failed to fetch page.';
+      stopReason = "Failed to fetch page.";
       break;
     }
-
     const html = await response.text();
-    
-    // 🛡️ ROBUST EXTRACTION: Find ALL post wrappers by their data-post attribute
-    // This works even if the post has NO text (e.g., only a link preview or image)
     const postStarts = [...html.matchAll(/<div[^>]*data-post="[^"]*\/(\d+)"[^>]*>/g)];
-    
     if (postStarts.length === 0) {
-      stopReason = 'Reached the beginning of the channel (no posts found on page).';
+      stopReason = "Reached the beginning of the channel (no posts found on page).";
       break;
     }
-
-    let batchMinId = Infinity;
-    let batchMaxId = -1;
+    let batchMinId2 = Infinity;
+    let batchMaxId2 = -1;
     let hitKnownPost = false;
-
     for (let i = 0; i < postStarts.length; i++) {
       const postId = parseInt(postStarts[i][1], 10);
-      
-      // 🛑 CRITICAL CHECK: If we've reached a post ID we already have, STOP immediately.
       if (postId <= maxPostId) {
         hitKnownPost = true;
-        stopReason = 'Caught up to previously saved posts.';
-        break; 
+        stopReason = "Caught up to previously saved posts.";
+        break;
       }
+      if (postId < batchMinId2) batchMinId2 = postId;
+      if (postId > batchMaxId2) batchMaxId2 = postId;
+      
+      // Fixed: Update global run min/max
+      if (postId < runMinId) runMinId = postId;
+      if (postId > runMaxId) runMaxId = postId;
 
-      // Track the boundaries of this specific batch
-      if (postId < batchMinId) batchMinId = postId;
-      if (postId > batchMaxId) batchMaxId = postId;
-
-      // Extract the HTML chunk belonging to this specific post
       const startIndex = postStarts[i].index + postStarts[i][0].length;
-      const endIndex = i < postStarts.length - 1 ? postStarts[i+1].index : html.length;
+      const endIndex = i < postStarts.length - 1 ? postStarts[i + 1].index : html.length;
       const postHtml = html.substring(startIndex, endIndex);
-
-      // 🎵 Extract SoundCloud links from this post's HTML
       const scRegex = /https?:\/\/(?:www\.)?soundcloud\.com\/[^\s<"']+/gi;
       const scLinks = [...new Set(postHtml.match(scRegex) || [])];
-
-      // 🧹 Extract text (if it exists)
       let plainText = "";
       const textMatch = postHtml.match(/<div[^>]*class="[^"]*tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/);
       if (textMatch) {
-        plainText = textMatch[1]
-          .replace(/<br\s*\/?>/gi, '\n')
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/&nbsp;/g, ' ')
-          .replace(/&amp;/g, '&')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/\s+/g, ' ')
-          .trim();
+        plainText = textMatch[1].replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
       }
-
-      // 🏷️ Dynamically extract ALL hashtags from plain text (used for standard posts or the main mix entry)
       const hashRegex = /(?:^|\s)#([a-zA-Z0-9_]+)/g;
-      const rawTags = new Set();
+      const rawTags = /* @__PURE__ */ new Set();
       let hashMatch;
       while ((hashMatch = hashRegex.exec(plainText)) !== null) {
         rawTags.add(hashMatch[1].toLowerCase());
       }
-
-      // 🚫 FILTER: Keep only tags that pass the exclusion rules
-      const validTags = [...rawTags].filter(tag => {
+      const validTags = [...rawTags].filter((tag) => {
         if (EXCLUDED_EXACT.has(tag)) return false;
         for (const substr of EXCLUDED_SUBSTR) {
           if (tag.includes(substr)) return false;
         }
         return true;
       });
-
       if (plainText.length > 0) {
-        newPostsText.push(`--- Post #${postId} ---\n${plainText}`);
+        newPostsText.push(`--- Post #${postId} ---
+${plainText}`);
       }
-
-      // 💾 If it has SoundCloud links, process tracks
       if (scLinks.length > 0) {
-        
-        // 🕒 NEW LOGIC: Check for Tracklist format (Timestamps followed by hashtags)
-        // Matches formats like "19:00" or "1:23:45" followed by hashtags.
         const tracklistRegex = /(\d{1,2}:\d{2}(?::\d{2})?)\s*((?:#[a-zA-Z0-9_]+\s*)+)/g;
         let trackMatch;
         const tracklistEntries = [];
-        
         while ((trackMatch = tracklistRegex.exec(plainText)) !== null) {
           const timeStr = trackMatch[1];
           const tagSection = trackMatch[2];
-          
-          // Extract tags specifically for this timestamp
-          const entryTags = new Set();
+          const entryTags = /* @__PURE__ */ new Set();
           let entryTagMatch;
           const entryTagRegex = /#([a-zA-Z0-9_]+)/g;
           while ((entryTagMatch = entryTagRegex.exec(tagSection)) !== null) {
             const tag = entryTagMatch[1].toLowerCase();
-            // Apply the same exclusion rules
-            if (!EXCLUDED_EXACT.has(tag) && !EXCLUDED_SUBSTR.some(substr => tag.includes(substr))) {
+            if (!EXCLUDED_EXACT.has(tag) && !EXCLUDED_SUBSTR.some((substr) => tag.includes(substr))) {
               entryTags.add(tag);
             }
           }
-          
           tracklistEntries.push({
             time: timeStr,
             tags: [...entryTags]
           });
         }
-
         if (tracklistEntries.length > 0) {
-          // 🎯 CASE 1: Post contains a tracklist with timestamps
-          
-          // 1a. Create a separate track entry for each timestamp
-          // We assume the timestamps apply to the FIRST (or primary) SoundCloud link in the post
           const baseScLink = scLinks[0];
-          tracklistEntries.forEach(entry => {
-            // Append the timestamp to the URL using SoundCloud's #t= format
+          tracklistEntries.forEach((entry) => {
             const timestampedLink = `${baseScLink}#t=${entry.time}`;
             newTracks.push({
-              postId: postId,
+              postId,
               hashtags: entry.tags,
               links: [timestampedLink]
             });
           });
-          
-          // 1b. Add the original SoundCloud link as a separate "mix" entry
-          // As requested, the main link is added with a "mix" hashtag
           newTracks.push({
-            postId: postId,
-            hashtags: ['mix'],
+            postId,
+            hashtags: ["mix"],
             links: scLinks
           });
-          
         } else {
-          // 🎯 CASE 2: Standard post (No tracklist timestamps found)
-          // Assign all valid tags from the post to the SoundCloud links
           newTracks.push({
-            postId: postId,
+            postId,
             hashtags: validTags,
             links: scLinks
           });
         }
       }
     }
-
     if (hitKnownPost) break;
-
-    // 📉 Paginate to the next older batch using the oldest post ID we just successfully processed
-    currentUrl = `${baseUrl}?before=${batchMinId}`;
+    currentUrl = `${baseUrl}?before=${batchMinId2}`;
     iterations++;
   }
-
-  // Save Combined Text
   if (newPostsText.length > 0) {
     newPostsText.sort((a, b) => parseInt(a.match(/\d+/)[0]) - parseInt(b.match(/\d+/)[0]));
-    const existingData = await env.TELEGRAM_KV.get('tribal_ambient_posts', 'text');
-    const finalText = existingData ? `${existingData}\n\n${newPostsText.join('\n\n')}` : newPostsText.join('\n\n');
-    await env.TELEGRAM_KV.put('tribal_ambient_posts', finalText);
-  }
+    const existingData = await env.TELEGRAM_KV.get("tribal_ambient_posts", "text");
+    const finalText = existingData ? `${existingData}
 
-  // Save Tracks JSON
+${newPostsText.join("\n\n")}` : newPostsText.join("\n\n");
+    await env.TELEGRAM_KV.put("tribal_ambient_posts", finalText);
+  }
   if (newTracks.length > 0 || existingTracks.length > 0) {
-    const trackMap = new Map();
-    existingTracks.forEach(t => trackMap.set(t.postId, t));
-    newTracks.forEach(t => trackMap.set(t.postId, t));
-    
-    // 🧹 FIX for new tracklist logic: 
-    // Because we now generate multiple tracks with the SAME postId (timestamps + mix), 
-    // using postId as the Map key will overwrite previous ones. 
-    // We change the key to a composite of postId + first link to ensure uniqueness.
-    const uniqueTrackMap = new Map();
-    existingTracks.forEach(t => uniqueTrackMap.set(`${t.postId}_${t.links[0]}`, t));
-    newTracks.forEach(t => uniqueTrackMap.set(`${t.postId}_${t.links[0]}`, t));
-
+    // Fixed: Removed unused `trackMap` dead code
+    const uniqueTrackMap = /* @__PURE__ */ new Map();
+    existingTracks.forEach((t) => uniqueTrackMap.set(`${t.postId}_${t.links[0]}`, t));
+    newTracks.forEach((t) => uniqueTrackMap.set(`${t.postId}_${t.links[0]}`, t));
     const mergedTracks = Array.from(uniqueTrackMap.values());
-    mergedTracks.sort((a, b) => b.postId - a.postId); // Newest first for UI
-    
-    await env.TELEGRAM_KV.put('tribal_ambient_tracks', JSON.stringify(mergedTracks));
+    mergedTracks.sort((a, b) => b.postId - a.postId);
+    await env.TELEGRAM_KV.put("tribal_ambient_tracks", JSON.stringify(mergedTracks));
   }
-
-  // 🔄 ALWAYS UPDATE STATE if we processed any posts, even if they had no text/links.
-  // This guarantees we never get stuck in an infinite loop or re-scrape the same page.
-  if (batchMinId !== Infinity) {
-    const updatedMin = minPostId === 0 ? batchMinId : Math.min(minPostId, batchMinId);
-    const updatedMax = Math.max(maxPostId, batchMaxId);
-    await env.TELEGRAM_KV.put('tribal_ambient_state', JSON.stringify({ minPostId: updatedMin, maxPostId: updatedMax }));
+  
+  // Fixed: Replaced undefined `batchMinId` and `batchMaxId` with `runMinId` and `runMaxId`
+  if (runMinId !== Infinity) {
+    const updatedMin = minPostId === 0 ? runMinId : Math.min(minPostId, runMinId);
+    const updatedMax = Math.max(maxPostId, runMaxId);
+    await env.TELEGRAM_KV.put("tribal_ambient_state", JSON.stringify({ minPostId: updatedMin, maxPostId: updatedMax }));
   }
-
   return new Response(
-    `✅ Processed ${newPostsText.length} text posts.\n🎵 Found ${newTracks.length} new tracks.\n⏱️ Time: ${((Date.now() - startTime) / 1000).toFixed(2)}s\n🔄 Iterations: ${iterations}\n🛑 Reason: ${stopReason}`,
-    { headers: { 'content-type': 'text/plain; charset=utf-8' } }
+    `✅ Processed ${newPostsText.length} text posts.
+🎵 Found ${newTracks.length} new tracks.
+⏱️ Time: ${((Date.now() - startTime) / 1e3).toFixed(2)}s
+🔄 Iterations: ${iterations}
+🛑 Reason: ${stopReason}`,
+    { headers: { "content-type": "text/plain; charset=utf-8" } }
   );
 }
-
-// 🎨 HTML UI GENERATOR
+__name(handleScrape, "handleScrape");
 function getHtml() {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -488,7 +415,12 @@ function getHtml() {
     }
 
     init();
-  </script>
+  <\/script>
 </body>
 </html>`;
 }
+__name(getHtml, "getHtml");
+export {
+  worker_default as default
+};
+//# sourceMappingURL=worker.js.map
