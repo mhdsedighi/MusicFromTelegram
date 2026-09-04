@@ -164,8 +164,11 @@ async function handleScrape(env) {
   let currentUrl = baseUrl;
   let stopReason = "Finished normally";
 
-  let runMinId = Infinity;
-  let runMaxId = -1;
+  // FIXED: Two-phase pagination to correctly resume backfilling older posts
+  // after hitting execution limits, while still catching up on new posts.
+  let runMinId = minPostId || Infinity; 
+  let runMaxId = maxPostId || -1;
+  let phase = (maxPostId === 0) ? "new_only" : "new_then_old";
 
   let oembedCalls = 0;
   const MAX_OEMBED_PER_RUN = 10;
@@ -217,19 +220,30 @@ async function handleScrape(env) {
     const html = await response.text();
     const postStarts = [...html.matchAll(/<div[^>]*data-post="[^"]*\/(\d+)"[^>]*>/g)];
     if (postStarts.length === 0) {
-      stopReason = "Reached the beginning of the channel (no posts found on page).";
+      stopReason = "Reached the beginning of the channel.";
+      runMinId = 1;
       break;
     }
     let batchMinId2 = Infinity;
     let batchMaxId2 = -1;
-    let hitKnownPost = false;
+    let hitBoundary = false;
+
     for (let i = 0; i < postStarts.length; i++) {
       const postId = parseInt(postStarts[i][1], 10);
-      if (postId <= maxPostId) {
-        hitKnownPost = true;
-        stopReason = "Caught up to previously saved posts.";
-        break;
+      
+      // Boundary checks based on current phase
+      if (phase === "new_only" || phase === "new_then_old") {
+        if (postId <= maxPostId) {
+          hitBoundary = true;
+          break;
+        }
+      } else if (phase === "old_only") {
+        if (postId >= minPostId) {
+          hitBoundary = true;
+          break;
+        }
       }
+
       if (postId < batchMinId2) batchMinId2 = postId;
       if (postId > batchMaxId2) batchMaxId2 = postId;
 
@@ -317,8 +331,33 @@ ${plainText}`);
         }
       }
     }
-    if (hitKnownPost) break;
-    currentUrl = `${baseUrl}?before=${batchMinId2}`;
+    
+    if (phase === "new_only" || phase === "new_then_old") {
+      if (hitBoundary) {
+        if (phase === "new_only") {
+          stopReason = "Caught up to previously saved posts (initial run).";
+          break;
+        } else {
+          // Switch to backfill phase
+          if (runMinId <= 1 || minPostId <= 1) {
+            stopReason = "Caught up and fully backfilled.";
+            runMinId = 1;
+            break;
+          }
+          phase = "old_only";
+          currentUrl = `${baseUrl}?before=${minPostId}`;
+        }
+      } else {
+        currentUrl = `${baseUrl}?before=${batchMinId2}`;
+      }
+    } else if (phase === "old_only") {
+      if (hitBoundary) {
+        stopReason = "Reached previously backfilled posts.";
+        break;
+      }
+      currentUrl = `${baseUrl}?before=${batchMinId2}`;
+    }
+
     iterations++;
   }
 
@@ -363,11 +402,19 @@ ${newPostsText.join("\n\n")}` : newPostsText.join("\n\n");
     await env.POSTS_KV.put("IMAGES_KV", JSON.stringify(thumbs));
   }
 
-  if (runMinId !== Infinity) {
-    const updatedMin = minPostId === 0 ? runMinId : Math.min(minPostId, runMinId);
-    const updatedMax = Math.max(maxPostId, runMaxId);
-    await env.POSTS_KV.put("tribal_ambient_state", JSON.stringify({ minPostId: updatedMin, maxPostId: updatedMax }));
+  if (runMinId !== Infinity && runMinId < minPostId) {
+    minPostId = runMinId;
   }
+  if (runMaxId !== -1 && runMaxId > maxPostId) {
+    maxPostId = runMaxId;
+  }
+  
+  if (stopReason.includes("beginning") || stopReason.includes("fully backfilled")) {
+    minPostId = 1;
+  }
+
+  await env.POSTS_KV.put("tribal_ambient_state", JSON.stringify({ minPostId, maxPostId }));
+
   return new Response(
     `✅ Processed ${newPostsText.length} text posts.
 🎵 Found ${newTracks.length} new tracks.
@@ -375,7 +422,8 @@ ${newPostsText.join("\n\n")}` : newPostsText.join("\n\n");
 📊 Subrequests: ${subrequestCount}/${MAX_SUBREQUESTS}
 ⏱️ Time: ${((Date.now() - startTime) / 1e3).toFixed(2)}s
 🔄 Iterations: ${iterations}
-🛑 Reason: ${stopReason}`,
+🛑 Reason: ${stopReason}
+📈 State: min=${minPostId}, max=${maxPostId}`,
     { headers: { "content-type": "text/plain; charset=utf-8" } }
   );
 }
