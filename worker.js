@@ -131,10 +131,15 @@ async function handleScrape(env) {
       const startIndex = postStarts[i].index + postStarts[i][0].length;
       const endIndex = i < postStarts.length - 1 ? postStarts[i + 1].index : html.length;
       const postHtml = html.substring(startIndex, endIndex);
-      const scRegex = /https?:\/\/(?:www\.)?soundcloud\.com\/[^\s<"']+/gi;
-      const scLinks = [...new Set(postHtml.match(scRegex) || [])];
+
+      // Fixed: For reply posts, `t.me/s` renders a preview of the QUOTED message
+      // (its author + its full text div) BEFORE the post's own text div. Using
+      // `matchAll` and taking the LAST `tgme_widget_message_text` gives us the post's
+      // OWN content and prevents quoted text from leaking into the scraper.
+      const textMatches = [...postHtml.matchAll(/<div[^>]*class="[^"]*tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/g)];
+      const textMatch = textMatches.length ? textMatches[textMatches.length - 1] : null;
+
       let plainText = "";
-      const textMatch = postHtml.match(/<div[^>]*class="[^"]*tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/);
       if (textMatch) {
         plainText = textMatch[1].replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
       }
@@ -155,6 +160,13 @@ async function handleScrape(env) {
         newPostsText.push(`--- Post #${postId} ---
 ${plainText}`);
       }
+
+      // Fixed: Collect SoundCloud links from `plainText` only (not the whole
+      // `postHtml`), so quoted messages / link previews in replies cannot
+      // contaminate the current post's link set.
+      const scRegex = /https?:\/\/(?:www\.)?soundcloud\.com\/[^\s<"']+/gi;
+      const scLinks = [...new Set(plainText.match(scRegex) || [])];
+
       if (scLinks.length > 0) {
         const tracklistRegex = /(\d{1,2}:\d{2}(?::\d{2})?)\s*((?:#[a-zA-Z0-9_]+\s*)+)/g;
         let trackMatch;
